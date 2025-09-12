@@ -3,8 +3,6 @@ import os
 from xml.etree import ElementTree as ET
 from PIL import Image
 
-
-
 class MyTransform:
     def __init__(self, mean=None, std=None):
         # ImageNet 기준 Normalize parameters
@@ -30,6 +28,44 @@ class MyTransform:
         return img, boxes, labels
 
 class VOCObjectDetection(Dataset):
+    """
+    PASCAL VOC Object Detection Dataset Loader.
+
+    이 클래스는 PASCAL VOC 2012 데이터셋을 로드하여 torch.utils.data의 Dataset 형식으로 제공합니다.
+    - 이미지와 XML 어노테이션 파일을 연결하여 `(image, target)` 튜플로 반환합니다.
+    - `target`은 dictionary로, "boxes"와 "labels"를 포함합니다.
+    - "boxes"는 객체의 bounding box 좌표를, "labels"는 객체의 클래스 인덱스를 나타냅니다.
+
+    Args:
+        root (str): VOC 데이터셋의 최상위 디렉토리 경로.
+            예시:
+            root/
+                Annotations/
+                ImageSets/
+                JPEGImages/
+        image_set (str, optional): 사용할 데이터셋 split.
+            - "train", "val", "trainval" 중 하나를 선택.
+            기본값은 "train".
+            trainval은 train과 val을 합친 데이터셋.
+
+    Returns:
+        tuple:
+            img (Tensor): [C, H, W] 크기의 이미지 텐서.
+            target (dict): 
+                - "boxes": Tensor, shape = [num_objects, 4]
+                  (xmin, ymin, xmax, ymax)
+                - "labels": Tensor, shape = [num_objects]
+
+    Example:
+        >>> dataset = VOCObjectDetection(root="data/VOC2012", image_set="val")
+        >>> print(len(dataset))
+        5823
+        >>> img, target = dataset[0]
+        >>> print(img.shape)
+        torch.Size([3, 375, 500])
+        >>> print(target['boxes'])
+        tensor([[48, 240, 195, 371]])
+    """
     def __init__(self, root, image_set="train"):
         # image_set = "train", "val", "trainval"
         split_file = os.path.join(root, "ImageSets", "Main", f"{image_set}.txt")
