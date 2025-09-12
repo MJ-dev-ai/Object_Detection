@@ -30,28 +30,28 @@ class MyTransform:
         return img, boxes, labels
 
 class VOCObjectDetection(Dataset):
-    def __init__(self, root):
-        self.transforms = transforms
-        annotation_path = os.path.join(root "Annotations")
+    def __init__(self, root, image_set="train"):
+        # image_set = "train", "val", "trainval"
+        split_file = os.path.join(root, "ImageSets", "Main", f"{image_set}.txt")
+        if not os.path.isfile(split_file):
+            raise FileNotFoundError(f"Split file not found: {split_file}")
+        
+        with open(split_file) as f:
+            image_ids = [line.strip() for line in f if line.strip()]
+
+        annotation_path = os.path.join(root, "Annotations")
         img_path = os.path.join(root, "JPEGImages")
 
         self.images = []
         self.annotations = []
 
-        for xml_file in os.listdir(annotation_path):
-            if not xml_file.endswith(".xml"):
-                continue
-            xml_path = os.path.join(annotation_path, xml_file)
-            tree = ET.parse(xml_path)
-            root = tree.getroot()
+        for image_id in image_ids:
+            image_file = os.path.join(img_path, f"{image_id}.jpg")
+            xml_file = os.path.join(annotation_path, f"{image_id}.xml")
 
-            objects = root.findall("object")
-            if len(objects) > 0:
-                image_name = root.find("filename").text
-                image_path = os.path.join(img_path, image_name)
-                if os.path.exists(image_path):
-                    self.images.append(image_path)
-                    self.annotations.append(xml_path)
+            if os.path.exists(image_file) and os.path.exists(xml_file):
+                self.images.append(image_file)
+                self.annotations.append(xml_file)
 
     def __len__(self):
         return len(self.images)
@@ -93,3 +93,11 @@ class VOCObjectDetection(Dataset):
         img, boxes, labels = MyTransform()(img, boxes, labels)
         
         return img, {"boxes": boxes, "labels": labels}
+    
+if __name__ == "__main__":
+    dataset = VOCObjectDetection(root="data/VOC2012", image_set="val")
+    print(f"Number of samples: {len(dataset)}")
+    img, target = dataset[0]
+    print(f"Image shape: {img.shape}")
+    print(f"Boxes: {target['boxes']}")
+    print(f"Labels: {target['labels']}")
