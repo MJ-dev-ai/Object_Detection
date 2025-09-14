@@ -2,6 +2,8 @@ from torch.utils.data import Dataset
 import os
 from xml.etree import ElementTree as ET
 from PIL import Image
+import numpy as np
+from augmentation import MosaicAugmentor
 
 class MyTransform:
     def __init__(self, mean=None, std=None):
@@ -68,6 +70,8 @@ class VOCObjectDetection(Dataset):
     """
     def __init__(self, root, image_set="train"):
         # image_set = "train", "val", "trainval"
+        self.image_set = image_set
+        self.mosaic = MosaicAugmentor(img_size=640)
         split_file = os.path.join(root, "ImageSets", "Main", f"{image_set}.txt")
         if not os.path.isfile(split_file):
             raise FileNotFoundError(f"Split file not found: {split_file}")
@@ -89,13 +93,14 @@ class VOCObjectDetection(Dataset):
                 self.images.append(image_file)
                 self.annotations.append(xml_file)
 
-    def __len__(self):
-        return len(self.images)
+    # load image and annotation for mosaic augmentation
+    def load_image_and_lagels(self, idx):
+        img = np.array(Image.open(self.images[idx]).convert("RGB"))
+        target = self.parse_annotation(self.annotations[idx])
+        return img, target
     
-    def __getitem__(self, idx):
-        img_path = self.images[idx]
-        img = Image.open(img_path).convert("RGB")
-        annotation_path = self.annotations[idx]
+    # Load bounding boxes and labels from image xml file
+    def parse_annotation(self, annotation_path):
         # PASCAL VOC class names
         VOC_CLASSES = [
             "aeroplane", "bicycle", "bird", "boat", "bottle",
@@ -125,10 +130,30 @@ class VOCObjectDetection(Dataset):
                 int(bbox.find("ymax").text)
             ]
             boxes.append(box)
-
-        img, boxes, labels = MyTransform()(img, boxes, labels)
+        boxes, labels = np.array(boxes), np.array(labels)
+        target = {"boxes": boxes, "labels": labels}
+        return target
+    
+    def __len__(self):
+        return len(self.images)
+    
+    def __getitem__(self, idx):
+        # Mosaic augmentation for train3 set
         
-        return img, {"boxes": boxes, "labels": labels}
+        img, target = self.load_image_and_lagels(idx)
+        # Normalize image and convert data into tensor
+        
+        if self.image_set == "train":
+            # MosaicAugmentor needs dataset for argv
+            img, target = self.mosaic(self, idx)
+        # Resize and pad inputs
+        else:
+            img, target = self.mosaic.letterbox(img, target)
+
+        img, boxes, labels = MyTransform()(img, target["boxes"], target["labels"])
+        target = {"boxes": boxes, "labels": labels}
+
+        return img, target
     
 if __name__ == "__main__":
     dataset = VOCObjectDetection(root="data/VOC2012", image_set="val")
