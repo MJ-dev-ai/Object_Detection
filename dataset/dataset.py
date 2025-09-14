@@ -3,7 +3,7 @@ import os
 from xml.etree import ElementTree as ET
 from PIL import Image
 import numpy as np
-from augmentation import MosaicAugmentor
+from .augmentation import MosaicAugmentor
 
 class MyTransform:
     def __init__(self, mean=None, std=None):
