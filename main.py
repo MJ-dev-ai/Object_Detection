@@ -4,8 +4,7 @@ import time, datetime
 def main():
     start_time = time.time()
     
-    # Simulate some processing
-    time.sleep(5)
+    time.sleep(0.5)
 
     end_time = time.time()
     elapsed_time = end_time - start_time
