@@ -3,17 +3,18 @@ import os
 from xml.etree import ElementTree as ET
 from PIL import Image
 import numpy as np
-from .augmentation import MosaicAugmentor
+from augmentation import MosaicAugmentor
 
 class MyTransform:
     def __init__(self, mean=None, std=None):
-        # ImageNet 기준 Normalize parameters
+        # Normalize parameters from ImageNet
         self.mean = mean if mean is not None else [0.485, 0.456, 0.406]
         self.std = std if std is not None else [0.229, 0.224, 0.225]
 
     def __call__(self, img, boxes, labels):
         import torch
         from torchvision.transforms import functional as F
+        from torchvision.transforms import ColorJitter
         """
         img    : PIL.Image
         boxes  : [[xmin, ymin, xmax, ymax], ...] (list of list)
@@ -22,8 +23,9 @@ class MyTransform:
         # --------- 1) PIL Image -> Tensor + Normalize ---------
         img = F.to_tensor(img)  # [C, H, W], float32 [0,1]
         img = F.normalize(img, mean=self.mean, std=self.std)
+        img = ColorJitter(0.3, 0.3, 0.3)(img)
 
-        # --------- 2) boxes, labels -> Tensor 변환 ---------
+        # --------- 2) boxes, labels -> Tensor ---------
         boxes = torch.as_tensor(boxes, dtype=torch.int32)
         labels = torch.as_tensor(labels, dtype=torch.int64)
 
@@ -33,26 +35,29 @@ class VOCObjectDetection(Dataset):
     """
     PASCAL VOC Object Detection Dataset Loader.
 
-    이 클래스는 PASCAL VOC 2012 데이터셋을 로드하여 torch.utils.data의 Dataset 형식으로 제공합니다.
-    - 이미지와 XML 어노테이션 파일을 연결하여 `(image, target)` 튜플로 반환합니다.
-    - `target`은 dictionary로, "boxes"와 "labels"를 포함합니다.
-    - "boxes"는 객체의 bounding box 좌표를, "labels"는 객체의 클래스 인덱스를 나타냅니다.
+    This class loads the PASCAL VOC 2012 dataset and provides it in the format of
+    `torch.utils.data.Dataset`.
+    
+    - Links images with their corresponding XML annotation files and returns them as a `(image, target)` tuple.
+    - `target` is a dictionary containing "boxes" and "labels".
+    - "boxes" represents the bounding box coordinates of objects,
+      while "labels" represents the class indices of those objects.
 
     Args:
-        root (str): VOC 데이터셋의 최상위 디렉토리 경로.
-            예시:
+        root (str): Path to the root directory of the VOC dataset.
+            Example:
             root/
                 Annotations/
                 ImageSets/
                 JPEGImages/
-        image_set (str, optional): 사용할 데이터셋 split.
-            - "train", "val", "trainval" 중 하나를 선택.
-            기본값은 "train".
-            trainval은 train과 val을 합친 데이터셋.
+        image_set (str, optional): Dataset split to use.
+            - Choose from "train", "val", or "trainval".
+            Default is "train".
+            "trainval" combines both the train and val sets.
 
     Returns:
         tuple:
-            img (Tensor): [C, H, W] 크기의 이미지 텐서.
+            img (Tensor): Image tensor with shape [C, H, W].
             target (dict): 
                 - "boxes": Tensor, shape = [num_objects, 4]
                   (xmin, ymin, xmax, ymax)
@@ -138,27 +143,25 @@ class VOCObjectDetection(Dataset):
         return len(self.images)
     
     def __getitem__(self, idx):
-        # Mosaic augmentation for train3 set
-        
+        # Mosaic augmentation for train set
         img, target = self.load_image_and_lagels(idx)
-        # Normalize image and convert data into tensor
-        
         if self.image_set == "train":
-            # MosaicAugmentor needs dataset for argv
             img, target = self.mosaic(self, idx)
-        # Resize and pad inputs
         else:
             img, target = self.mosaic.letterbox(img, target)
-
         img, boxes, labels = MyTransform()(img, target["boxes"], target["labels"])
         target = {"boxes": boxes, "labels": labels}
 
         return img, target
     
 if __name__ == "__main__":
-    dataset = VOCObjectDetection(root="data/VOC2012", image_set="val")
+    import matplotlib.pyplot as plt
+    dataset = VOCObjectDetection(root="data/VOC2012", image_set="train")
     print(f"Number of samples: {len(dataset)}")
-    img, target = dataset[0]
+    img, target = dataset[1]
     print(f"Image shape: {img.shape}")
     print(f"Boxes: {target['boxes']}")
     print(f"Labels: {target['labels']}")
+    img_numpy = img.permute(1,2,0).numpy()
+    plt.imshow(img_numpy)
+    plt.show()

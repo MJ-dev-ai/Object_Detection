@@ -4,14 +4,42 @@ import numpy as np
 from PIL import Image
 
 class MosaicAugmentor:
+    """
+    Mosaic Augmentator for YOLOv5n
+
+    This class combines image from dataset with 3 images from dataset to create new augmented image.
+    - Returns (image, target) tuple with converted image and labels.
+    - Converts bounding box coordinate fit to new augmented image.
+
+    Args:
+        image_size (int, optional): Converts image size to (image_size, image_size).
+            - Default is 640, desired size for YOLOv5n.
+
+        mosaic_prob (float, optional): Augmentation apply probability.
+            - 0 to 1 float value.
+            - Default is 1.0.
+
+    Example:
+        >>> augmentator = MosaicAugmentator(img_size=640, mosaic_prob=0.5)
+        >>> img, target = augmentator()(dataset, 0)
+        >>> print(img.shape)
+    """
     def __init__(self, img_size=640, mosaic_prob=1.0):
         self.img_size = img_size
         self.mosaic_prob = mosaic_prob
 
     def __call__(self, dataset, idx):
-        """ 
-        dataset: VOCObjectDetection 객체
-        idx: 현재 index
+        """
+        Args:
+            dataset: Augmentator needs dataset to get 3 random samples.
+            idx: dataset[idx] must be included in 4 data samples.
+
+        Returns:
+            tuple:
+                img: Augmented numpy image with size (img_size, img_size).
+                target: Dictionary with "boxes" and "label".
+                    "boxes": Bounding box converted to fit in new image.
+                    "label": Class number.
         """
         # 114 padded images and labels with probability 1 - mosaic_prob
         if random.random() > self.mosaic_prob:
@@ -82,6 +110,21 @@ class MosaicAugmentor:
         return mosaic_img, target
 
     def letterbox(self, img, target, new_shape=(640, 640), color=(114, 114, 114)):
+        """
+        Pad image to new shape and convert target["boxes"] to fit to new image.
+        Padded pixel color value is (114, 114, 114)
+
+        Argv:
+            img: Numpy array
+            target: Dictionary with "boxes" and "labels"
+            new_shape: tuple(h, w)
+            color: tuple(r, g, b)
+        
+        Return:
+            tuple:
+                img_padded: Numpy array
+                target: Dictionary with "boxes" and "labels"
+        """
         h, w = img.shape[:2]
         scale = min(new_shape[0] / h, new_shape[1] / w)
         new_w, new_h = int(w * scale), int(h * scale)
