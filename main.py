@@ -1,45 +1,50 @@
 from config import flags
 import time, datetime
 import torch
+from torch.optim import Adam
+from torch.utils.data import DataLoader
 from model import YOLOv5n
 from dataset import VOCObjectDetection
 from train import Yolo_Loss
+from utils import collate_fn
+from tqdm import tqdm
 
 
 def main():
     start_time = time.time()
     
-    # 가짜 데이터
-    batch_size = 2
-    A = 3
-    H, W = 20, 20
-    num_classes = 20
-    img_size = 640
+    # Load dataset
+    train_dataset = VOCObjectDetection(root=flags["data_dir"], image_set='train')
+    train_loader = DataLoader(train_dataset, batch_size=flags["batch_size"], shuffle=True, collate_fn=collate_fn)
 
-    # 랜덤 target (중심좌표, w, h 포함)
-    target = {
-        "boxes": torch.tensor([
-            [[100, 150, 200, 250], [300, 300, 400, 400]],  # 첫 번째 이미지의 2개 박스
-            [[50, 50, 100, 100], [250, 250, 350, 350]]     # 두 번째 이미지의 2개 박스
-        ]),
-        "labels": torch.tensor([
-            [0, 5],
-            [3, 7]
-        ])
-    }
+    # Load model
+    model = YOLOv5n(num_classes=20, anchor=3)
 
-    loss_fn = Yolo_Loss(num_classes=num_classes, img_size=img_size)
+    # Loss function and optimizer
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    criterion = Yolo_Loss(num_classes=flags["num_classes"], img_size=320, device=device)
+    optimizer = Adam(params=model.parameters(), lr = flags["learning_rate"])
 
-    # 가짜 predictions: target과 완전히 동일하게 설정
-    preds = torch.zeros(batch_size, A*(5+num_classes), H, W)
-    encoded_target = loss_fn.build_target(target, scale_idx=2, device='cpu')
+    train_loss = []
+    for epoch in range(flags["num_epochs"]):
+        epoch_loss = 0
+        for (data, target) in tqdm(train_loader):
+            preds = model(data)
 
-    # preds의 box와 obj, cls를 target과 동일하게 맞춰줌
-    preds = encoded_target.clone()
+            loss, loss_items = criterion(preds, target)
 
-    # forward 실행
-    loss = loss_fn(preds, target, scale_idx=2)
-    print("Loss (Pred == Target):", loss.item())
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            train_loss.append(loss.cpu().item())
+            epoch_loss += loss.cpu().item()
+        print(f"[Epoch {epoch+1}/{flags['num_epochs']}],",
+            f"Total Loss: {epoch_loss:.4f},",
+            f"(box: {loss_items['box']:.4f},",
+            f"obj: {loss_items['obj']:.4f},",
+            f"cls: {loss_items['cls']:.4f})")
+
 
     end_time = time.time()
     elapsed_time = end_time - start_time

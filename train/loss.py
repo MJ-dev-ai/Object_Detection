@@ -1,113 +1,105 @@
 import torch
 from torch import nn
 
-
-
 class Yolo_Loss(nn.Module):
-    def __init__(self, anchors=None, num_classes=20, img_size=640, lambda_box=0.05, lambda_obj=1.0, lambda_cls=0.5, device='cpu'):
+    def __init__(self, anchors=None, num_classes=20, img_size=640,
+                 lambda_box=0.05, lambda_obj=1.0, lambda_cls=0.5, device='cpu'):
         super(Yolo_Loss, self).__init__()
-        self.num_classes=num_classes
-        self.img_size=img_size
+        self.num_classes = num_classes
+        self.img_size = img_size
         self.anchors = anchors
         if anchors is None:
             self.anchors = torch.tensor([
-                (10, 13), (16, 30), (33, 23),
-                (30, 61), (62, 45), (59, 119),
-                (116, 90), (156, 198), (373, 326)
-            ]) / self.img_size # Normalize with image size
+                [(10, 13), (16, 30), (33, 23)],
+                [(30, 61), (62, 45), (59, 119)],
+                [(116, 90), (156, 198), (373, 326)]
+            ]) / self.img_size  # normalize
+        self.anchors = self.anchors.to(device)
         self.lambda_box = lambda_box
         self.lambda_obj = lambda_obj
         self.lambda_cls = lambda_cls
         self.bce = nn.BCEWithLogitsLoss(reduction='mean')
         self.device = device
 
-    def build_target(self, targets, scale_idx, num_classes=20, device='cpu'):
+    def build_target(self, targets, scale_idx, num_classes=20):
         """
-        targets: (N, M, 5) -> [x1, y1, x2, y2, class_id]
-        N: batch size
-        M: Number of boxes for each images
+        targets: dict with lists
+        targets["boxes"] -> list of Tensors [(num_boxes_i, 4), ...]
+        targets["labels"] -> list of Tensors [(num_boxes_i,), ...]
+        Returns:
+        target_tensor: (N, A, 5+num_classes, H, W)
         """
         H, W = [(80, 80), (40, 40), (20, 20)][scale_idx]
-        boxes, labels = targets["boxes"], targets["labels"]
-        if labels.ndim == 2:
-            labels = labels.unsqueeze(-1)
-        target = torch.cat([boxes.float(), labels.float()], dim=-1)
-        anchors = self.anchors[scale_idx * 3:(scale_idx + 1) * 3]
+        N = len(targets)
+        A = 3
+        device = self.device
 
-        N = target.shape[0]
-        A = anchors.shape[0]
+        anchors = self.anchors[scale_idx].to(device).float()
+        target_tensor = torch.zeros((N, A, 5 + num_classes, H, W), device=device, dtype=torch.float32)
 
-        target_tensor = torch.zeros((N, A, 5 + num_classes, H, W), device=device)
+        for b in range(N):
+            target = targets[b]
+            if target.numel() == 0:
+                continue
 
-        for b in range(N): # Number of data
-            for box in target[b]:
-                x1, y1, x2, y2, cls = box
-                if x2 <= x1 or y2 <= y1:
-                    continue  # invalid box
+            for t in target:  # each box: [x1, y1, x2, y2, obj, class_id]
+                x1, y1, x2, y2, obj, cls = t
+                if x2 <= x1 or y2 <= y1:  # skip invalid boxes
+                    continue
 
-                # Normalize coordinates and size of bbox into [0, 1]
-                cx = (x1 + x2) / 2 / self.img_size
-                cy = (y1 + y2) / 2 / self.img_size
+                # Normalize to [0,1]
+                cx = ((x1 + x2) / 2.0) / self.img_size
+                cy = ((y1 + y2) / 2.0) / self.img_size
                 w = (x2 - x1) / self.img_size
                 h = (y2 - y1) / self.img_size
 
-                gx, gy = int(cx * W), int(cy * H) # Points in (H, W)
-                dx, dy = cx * W - gx, cy * H - gy # Position of anchor from gx, gy
+                gx, gy = int((cx * W).clamp(0, W - 1).item()), int((cy * H).clamp(0, H - 1).item())
+                dx, dy = (cx * W - gx), (cy * H - gy)
 
-                # Choose best anchor
-                ratios = torch.stack([w / anchors[:, 0], h / anchors[:, 1]], dim=1) # Ratio of width and height
-                ious = torch.min(ratios, 1 / ratios).prod(1) # 
-                best_anchor = torch.argmax(ious) # Choose most similar size anchor as target box
+                # Select best anchor
+                wh_ratio = torch.stack([w / anchors[:, 0], h / anchors[:, 1]], dim=1)
+                with torch.no_grad():
+                    inv = 1.0 / (wh_ratio + 1e-6)
+                    mins = torch.min(wh_ratio, inv)
+                    ious_like = mins.prod(dim=1)
+                    best_anchor = int(torch.argmax(ious_like).item())
 
-                # Save target
+                # Write to target tensor
                 target_tensor[b, best_anchor, 0, gy, gx] = dx
                 target_tensor[b, best_anchor, 1, gy, gx] = dy
-                target_tensor[b, best_anchor, 2, gy, gx] = torch.log(w / anchors[best_anchor][0] + 1e-6)
-                target_tensor[b, best_anchor, 3, gy, gx] = torch.log(h / anchors[best_anchor][1] + 1e-6)
+                target_tensor[b, best_anchor, 2, gy, gx] = torch.log(w / (anchors[best_anchor, 0] + 1e-6) + 1e-6)
+                target_tensor[b, best_anchor, 3, gy, gx] = torch.log(h / (anchors[best_anchor, 1] + 1e-6) + 1e-6)
                 target_tensor[b, best_anchor, 4, gy, gx] = 1.0  # objectness
-                target_tensor[b, best_anchor, 5 + int(cls), gy, gx] = 1.0  # one-hot class
+                cls_idx = int(cls.item())
+                if 0 <= cls_idx < num_classes:
+                    target_tensor[b, best_anchor, 5 + cls_idx, gy, gx] = 1.0
 
         return target_tensor
 
-    def forward(self, preds, target, scale_idx):
-        H, W = [(80, 80), (40, 40), (20, 20)][scale_idx]
-        stride = self.img_size / H
-        A = 3
-        anchors = self.anchors[scale_idx * A:(scale_idx + 1) * A]
-        target = self.build_target(target, scale_idx = scale_idx, num_classes=self.num_classes, device=self.device)
-        preds = preds.view(-1, A, 5 + self.num_classes, H, W)
-        preds_box = preds[:, :, :4, :, :]
-        preds_obj = preds[:, :, 4, :, :]
-        preds_cls = preds[:, :, 5:, :, :]
-        
-        target_box = target[:, :, :4, :, :]
-        target_obj = target[:, :, 4, :, :]
-        target_cls = target[:, :, 5:, :, :]
-        
-        # Decode box coordinate
-        # xgrid, ygrid: tensor(H, W) -> torch.stack((xgrid, ygrid), 2): tensor(H, W, 2)
-        ygrid, xgrid = torch.meshgrid([torch.arange(H, device=self.device), torch.arange(W, device=self.device)], indexing='ij')
-        grid = torch.stack((xgrid, ygrid), 2).view(1, 1, H, W, 2).float()
-        pred_tx_ty = preds_box[:, :, :2, :, :].permute(0, 1, 3, 4, 2) # Permute to (N, A, H, W, 2) to fit in grid
-        pred_tw_th = preds_box[:, :, 2:, :, :].permute(0, 1, 3, 4, 2)
-        pred_xy = (2.0 * torch.sigmoid(pred_tx_ty) - 0.5 + grid) * stride
-        pred_wh = ((2.0 * torch.sigmoid(pred_tw_th)) ** 2) * anchors.view(1, A, 1, 1, 2) # (0, 4) size wh * anchor
-        preds_box_decode = torch.cat([pred_xy, pred_wh], dim=-1) # (N, A, H, W, 4)
-        preds_box_decode = preds_box_decode[preds_obj==1]
-        
-        target_tx_ty = target_box[:, :, :2, :, :].permute(0, 1, 3, 4, 2)
-        target_tw_th = target_box[:, :, 2:, :, :].permute(0, 1, 3, 4, 2)
-        target_xy = (target_tx_ty + grid) * stride
-        target_wh = torch.exp(target_tw_th) * anchors.view(1, A, 1, 1, 2)
-        target_box_decode = torch.cat([target_xy, target_wh], dim=-1) # (N, A, H, W, 4)
-        target_box_decode = target_box_decode[target_obj==1]
+    def forward(self, preds, target):
+        """
+        preds: list of 3 tensors
+            [
+                [N, 3*(5+num_classes), 80, 80],  # small scale
+                [N, 3*(5+num_classes), 40, 40],  # medium scale
+                [N, 3*(5+num_classes), 20, 20]   # large scale
+            ]
+        target: {'boxes': Tensor, 'labels': Tensor}
+        """
+        assert isinstance(preds, (list, tuple)) and len(preds) == 3, \
+            "YOLOv5n must output 3 feature maps."
 
-        iou = self.bbox_iou(preds_box_decode.view(-1,4), target_box_decode.view(-1,4)).sum()
+        total_loss = 0.0
+        loss_items = {'box': 0, 'obj': 0, 'cls': 0}
 
-        loss_box = 1.0 - iou
-        loss_obj = self.bce(preds_obj, target_obj)
-        loss_cls = self.bce(preds_cls, target_cls)
-        return (self.lambda_box * loss_box + self.lambda_obj * loss_obj + self.lambda_cls * loss_cls)
+        for scale_idx, pred in enumerate(preds):
+            loss, l_box, l_obj, l_cls = self.compute_loss_per_scale(pred, target, scale_idx)
+            total_loss += loss
+            loss_items['box'] += l_box.item()
+            loss_items['obj'] += l_obj.item()
+            loss_items['cls'] += l_cls.item()
+
+        return total_loss, loss_items
     
     def bbox_iou(self, box1, box2, eps=1e-7):
         # x1, x2 = cx - w/2, cx + w/2
@@ -122,18 +114,88 @@ class Yolo_Loss(nn.Module):
         b2_x2 = box2[:, 0] + box2[:, 2] / 2
         b2_y2 = box2[:, 1] + box2[:, 3] / 2
 
-        # Calculate Area of intersection of two boxes
         inter_x1 = torch.max(b1_x1, b2_x1)
         inter_y1 = torch.max(b1_y1, b2_y1)
         inter_x2 = torch.min(b1_x2, b2_x2)
         inter_y2 = torch.min(b1_y2, b2_y2)
         inter_area = (inter_x2 - inter_x1).clamp(0) * (inter_y2 - inter_y1).clamp(0)
 
-        # Union
         b1_area = (b1_x2 - b1_x1) * (b1_y2 - b1_y1)
         b2_area = (b2_x2 - b2_x1) * (b2_y2 - b2_y1)
-        # B1 ∪ B2 = B1 + B2 - (B1 ∩ B2)
         union_area = b1_area + b2_area - inter_area + eps
 
-        # IOU = (B1 ∩ B2) / (B1 ∪ B2)
         return inter_area / union_area
+    
+    def compute_loss_per_scale(self, pred, target, scale_idx):
+        """
+        pred: [N, 3*(5+num_classes), H, W]
+        target: {'boxes': [Tensor,...], 'labels':[Tensor,...]}  (lists per image)
+        """
+        pred = pred.to(self.device)
+        N = pred.shape[0]
+        H, W = [(80, 80), (40, 40), (20, 20)][scale_idx]
+        stride = self.img_size / H
+        A = 3
+
+        anchors = self.anchors[scale_idx].to(self.device).float()
+        target_tensor = self.build_target(target, scale_idx, self.num_classes)
+
+        pred = pred.view(N, A, 5 + self.num_classes, H, W)
+        pred_box = pred[:, :, :4, :, :]
+        pred_obj = pred[:, :, 4, :, :]
+        pred_cls = pred[:, :, 5:, :, :]
+
+        target_box = target_tensor[:, :, :4, :, :]
+        target_obj = target_tensor[:, :, 4, :, :]
+        target_cls = target_tensor[:, :, 5:, :, :]
+
+        # Create grid
+        ygrid, xgrid = torch.meshgrid(
+            [torch.arange(H, device=self.device), torch.arange(W, device=self.device)], indexing='ij'
+        )
+        grid = torch.stack((xgrid, ygrid), 2).view(1, 1, H, W, 2).float().to(self.device)
+
+        # Decode predictions
+        pred_tx_ty = pred_box[:, :, 0:2, :, :].permute(0, 1, 3, 4, 2)
+        pred_tw_th = pred_box[:, :, 2:4, :, :].permute(0, 1, 3, 4, 2)
+
+        pred_xy = (2.0 * torch.sigmoid(pred_tx_ty) - 0.5 + grid) * stride
+        pred_wh = ((2.0 * torch.sigmoid(pred_tw_th)) ** 2) * anchors.view(1, A, 1, 1, 2)
+        pred_box_decode = torch.cat([pred_xy, pred_wh], dim=-1)
+
+        # Decode targets
+        t_tx_ty = target_box[:, :, 0:2, :, :].permute(0, 1, 3, 4, 2)
+        t_tw_th = target_box[:, :, 2:4, :, :].permute(0, 1, 3, 4, 2)
+
+        target_xy = (t_tx_ty + grid) * stride
+        target_wh = torch.exp(t_tw_th) * anchors.view(1, A, 1, 1, 2)
+        target_box_decode = torch.cat([target_xy, target_wh], dim=-1)
+
+        # Positive mask
+        pos_mask = (target_obj == 1)
+        pos_idx = pos_mask.view(-1)
+
+        pred_pos = pred_box_decode.view(-1, 4)[pos_idx]
+        target_pos = target_box_decode.view(-1, 4)[pos_idx]
+
+        # IoU loss
+        if pred_pos.numel() == 0:
+            loss_box = torch.tensor(0.0, device=self.device)
+        else:
+            ious = self.bbox_iou(pred_pos, target_pos)
+            loss_box = (1.0 - ious).mean()
+
+        # Objectness loss
+        loss_obj = self.bce(pred_obj, target_obj)
+
+        # Classification loss
+        pred_cls_permute = pred_cls.permute(0, 1, 3, 4, 2)
+        target_cls_permute = target_cls.permute(0, 1, 3, 4, 2)
+        loss_cls = self.bce(pred_cls_permute, target_cls_permute)
+
+        total_loss = (
+            self.lambda_box * loss_box +
+            self.lambda_obj * loss_obj +
+            self.lambda_cls * loss_cls
+        )
+        return total_loss, loss_box.detach(), loss_obj.detach(), loss_cls.detach()

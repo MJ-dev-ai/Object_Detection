@@ -1,5 +1,7 @@
+import torch
 from torch.utils.data import Dataset
 import os
+import cv2
 from xml.etree import ElementTree as ET
 from PIL import Image
 import numpy as np
@@ -11,8 +13,7 @@ class MyTransform:
         self.mean = mean if mean is not None else [0.485, 0.456, 0.406]
         self.std = std if std is not None else [0.229, 0.224, 0.225]
 
-    def __call__(self, img, boxes, labels):
-        import torch
+    def __call__(self, img):
         from torchvision.transforms import functional as F
         from torchvision.transforms import ColorJitter
         """
@@ -22,14 +23,10 @@ class MyTransform:
         """
         # --------- 1) PIL Image -> Tensor + Normalize ---------
         img = F.to_tensor(img)  # [C, H, W], float32 [0,1]
-        img = F.normalize(img, mean=self.mean, std=self.std)
         img = ColorJitter(0.3, 0.3, 0.3)(img)
+        img = F.normalize(img, mean=self.mean, std=self.std)
 
-        # --------- 2) boxes, labels -> Tensor ---------
-        boxes = torch.as_tensor(boxes, dtype=torch.int32)
-        labels = torch.as_tensor(labels, dtype=torch.int64)
-
-        return img, boxes, labels
+        return img
 
 class VOCObjectDetection(Dataset):
     """
@@ -73,10 +70,10 @@ class VOCObjectDetection(Dataset):
         >>> print(target['boxes'])
         tensor([[48, 240, 195, 371]])
     """
-    def __init__(self, root, image_set="train"):
+    def __init__(self, root, image_set="train", img_size=640):
         # image_set = "train", "val", "trainval"
         self.image_set = image_set
-        self.mosaic = MosaicAugmentor(img_size=640)
+        self.mosaic = MosaicAugmentor(img_size=img_size)
         split_file = os.path.join(root, "ImageSets", "Main", f"{image_set}.txt")
         if not os.path.isfile(split_file):
             raise FileNotFoundError(f"Split file not found: {split_file}")
@@ -99,8 +96,8 @@ class VOCObjectDetection(Dataset):
                 self.annotations.append(xml_file)
 
     # load image and annotation for mosaic augmentation
-    def load_image_and_lagels(self, idx):
-        img = np.array(Image.open(self.images[idx]).convert("RGB"))
+    def load_image_and_labels(self, idx):
+        img = cv2.imread(self.images[idx])[:, :, ::-1]
         target = self.parse_annotation(self.annotations[idx])
         return img, target
     
@@ -117,42 +114,36 @@ class VOCObjectDetection(Dataset):
         # Read annotation to find bounding boxes and labels
         xml_tree = ET.parse(annotation_path)
         root = xml_tree.getroot()
-        boxes = []
-        labels = []
+        targets = []
         # Iterate over all object elements in the XML
         for obj in root.findall("object"):
             # Save Labels
             label = obj.find("name").text
-            label = VOC_CLASSES.index(obj.find("name").text) + 1 # 0 for background
-            labels.append(label)
+            label = VOC_CLASSES.index(obj.find("name").text)
+            
 
             # Save Bounding Boxes
             bbox = obj.find("bndbox")
-            box = [
-                int(bbox.find("xmin").text),
-                int(bbox.find("ymin").text),
-                int(bbox.find("xmax").text),
-                int(bbox.find("ymax").text)
-            ]
-            boxes.append(box)
-        boxes, labels = np.array(boxes), np.array(labels)
-        target = {"boxes": boxes, "labels": labels}
-        return target
+            xmin = int(bbox.find("xmin").text)
+            ymin = int(bbox.find("ymin").text)
+            xmax = int(bbox.find("xmax").text)
+            ymax = int(bbox.find("ymax").text)
+            targets.append([xmin, ymin, xmax, ymax, 1.0, label])
+        targets = np.array(targets)
+        return targets
     
     def __len__(self):
         return len(self.images)
     
     def __getitem__(self, idx):
         # Mosaic augmentation for train set
-        img, target = self.load_image_and_lagels(idx)
+        img, target = self.load_image_and_labels(idx)
         if self.image_set == "train":
             img, target = self.mosaic(self, idx)
         else:
             img, target = self.mosaic.letterbox(img, target)
-        img, boxes, labels = MyTransform()(img, target["boxes"], target["labels"])
-        target = {"boxes": boxes, "labels": labels}
-
-        return img, target
+        img = MyTransform()(img)
+        return img, torch.tensor(target, dtype=torch.float32)
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
@@ -162,7 +153,5 @@ if __name__ == "__main__":
     m, n = img.max(), img.min()
     img = (img - n) / (m - n) * 255
     img_numpy = img.permute(1,2,0).numpy().astype(np.uint8)
-    boxes, labels = np.array(target["boxes"]), np.array(target["labels"])
-    target = {"boxes": boxes, "labels": labels}
     plt.imshow(img_numpy)
     plt.show()
