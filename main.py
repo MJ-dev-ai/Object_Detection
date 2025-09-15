@@ -22,6 +22,7 @@ def main():
 
     # Loss function and optimizer
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(device)
     criterion = Yolo_Loss(num_classes=flags["num_classes"], img_size=320, device=device)
     optimizer = Adam(params=model.parameters(), lr = flags["learning_rate"])
 
