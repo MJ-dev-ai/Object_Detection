@@ -1,1 +1,1 @@
-from .model import Backbone, Neck, Head
+from .model import YOLOv5n

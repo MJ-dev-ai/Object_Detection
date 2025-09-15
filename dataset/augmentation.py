@@ -75,18 +75,22 @@ class MosaicAugmentor:
                 # Position for random scaled original image
                 # Cut from bottom-right
                 x1b, y1b, x2b, y2b = new_w - (x2a - x1a), new_h - (y2a - y1a), new_w, new_h
+                pos_x, pos_y = xc - new_w, yc - new_h
             elif i == 1:  # top-right
                 x1a, y1a, x2a, y2a = xc, max(yc - new_h, 0), min(xc + new_w, s), yc
                 # Cut from bottom-left
                 x1b, y1b, x2b, y2b = 0, new_h - (y2a - y1a), min(new_w, x2a - x1a), new_h
+                pos_x, pos_y = xc, yc - new_h
             elif i == 2:  # bottom-left
                 x1a, y1a, x2a, y2a = max(xc - new_w, 0), yc, xc, min(s, yc + new_h)
                 # Cut from top-right
                 x1b, y1b, x2b, y2b = new_w - (x2a - x1a), 0, new_w, min(y2a - y1a, new_h)
+                pos_x, pos_y = xc - new_w, yc
             else:  # bottom-right
                 x1a, y1a, x2a, y2a = xc, yc, min(xc + new_w, s), min(s, yc + new_h)
                 # Cut from top-left
                 x1b, y1b, x2b, y2b = 0, 0, min(new_w, x2a - x1a), min(new_h, y2a - y1a)
+                pos_x, pos_y = xc, yc
 
             # Attach original image to new image
             mosaic_img[y1a:y2a, x1a:x2a] = img[y1b:y2b, x1b:x2b]
@@ -95,16 +99,16 @@ class MosaicAugmentor:
             boxes = target["boxes"].copy()
             labels = target["labels"].copy()
             if len(boxes) > 0:
+                boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]] * (x2a - x1a) / w + pos_x, 0, s - 1)
+                boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]] * (y2a - y1a) / h + pos_y, 0, s - 1)
                 for i, box in enumerate(boxes):
-                    box[[0, 2]] = box[[0, 2]] * (x2b - x1b) / w + x1a
-                    box[[1, 3]] = box[[1, 3]] * (y2b - y1b) / h + y1a
                     x_box = box[2] - box[0]
                     y_box = box[3] - box[1]
                     if (x_box > 4) & (y_box > 4):
                         mosaic_boxes.append(box)
                         mosaic_labels.append(labels[i])
 
-        target["boxes"] = mosaic_img
+        target["boxes"] = mosaic_boxes
         target["labels"] = mosaic_labels
         # 최종 target
         return mosaic_img, target

@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from common import Conv, C3Block, Focus, SPPF
+from .common import Conv, C3Block, Focus, SPPF
 
 # Darknet Backbone for YOLOv5n
 class Backbone(nn.Module):

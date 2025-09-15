@@ -3,7 +3,7 @@ import os
 from xml.etree import ElementTree as ET
 from PIL import Image
 import numpy as np
-from augmentation import MosaicAugmentor
+from .augmentation import MosaicAugmentor
 
 class MyTransform:
     def __init__(self, mean=None, std=None):
@@ -153,15 +153,16 @@ class VOCObjectDetection(Dataset):
         target = {"boxes": boxes, "labels": labels}
 
         return img, target
-    
+
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     dataset = VOCObjectDetection(root="data/VOC2012", image_set="train")
     print(f"Number of samples: {len(dataset)}")
     img, target = dataset[1]
-    print(f"Image shape: {img.shape}")
-    print(f"Boxes: {target['boxes']}")
-    print(f"Labels: {target['labels']}")
-    img_numpy = img.permute(1,2,0).numpy()
+    m, n = img.max(), img.min()
+    img = (img - n) / (m - n) * 255
+    img_numpy = img.permute(1,2,0).numpy().astype(np.uint8)
+    boxes, labels = np.array(target["boxes"]), np.array(target["labels"])
+    target = {"boxes": boxes, "labels": labels}
     plt.imshow(img_numpy)
     plt.show()
