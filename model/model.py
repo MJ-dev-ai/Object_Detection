@@ -113,4 +113,4 @@ class YOLOv5n(nn.Module):
 if __name__ == "__main__":
     from torchinfo import summary
     model = YOLOv5n()
-    summary(model, input_size=(1,3,640, 640))
+    summary(model, input_size=(1, 3, 320, 320))

@@ -1,6 +1,7 @@
 from config import flags
 import time, datetime
 import torch
+import os
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 from model import YOLOv5n
@@ -15,7 +16,7 @@ def main():
     
     # Load dataset
     train_dataset = VOCObjectDetection(root=flags["data_dir"], image_set='train')
-    train_loader = DataLoader(train_dataset, batch_size=flags["batch_size"], shuffle=True, collate_fn=collate_fn)
+    train_loader = DataLoader(train_dataset, batch_size=flags["batch_size"], shuffle=True, collate_fn=collate_fn, num_workers=flags["num_workers"])
 
     # Load model
     model = YOLOv5n(num_classes=20, anchor=3)
@@ -40,12 +41,16 @@ def main():
 
             train_loss.append(loss.cpu().item())
             epoch_loss += loss.cpu().item()
+        epoch_loss /= len(train_loader)
         print(f"[Epoch {epoch+1}/{flags['num_epochs']}],",
             f"Total Loss: {epoch_loss:.4f},",
             f"(box: {loss_items['box']:.4f},",
             f"obj: {loss_items['obj']:.4f},",
             f"cls: {loss_items['cls']:.4f})")
-
+        if (epoch + 1) % 10 == 0:
+            if not os.path.exists(flags["model_dir"]): os.mkdir(flags["model_dir"])
+            filename = "parameters.pt"
+            torch.save(model.cpu().parameters(), os.path.join(flags["model_dir"], filename))
 
     end_time = time.time()
     elapsed_time = end_time - start_time
