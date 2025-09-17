@@ -54,9 +54,10 @@ def decode_pred(pred, scale_idx, num_classes=20, img_size=640, conf_thres=0.25, 
             Each row represents a detected box in the format [x1, y1, x2, y2, score, label].
     """
     A = 3
-    N, _, H, W = pred.shape
-    stride = img_size / H
-
+    stride = [8, 16, 32][scale_idx]
+    H, W = int(img_size / stride), int(img_size / stride)
+    N = len(pred)
+    
     # Reshape prediction
     pred = pred.view(N, A, (5 + num_classes), H, W).permute(0, 1, 3, 4, 2)
 
@@ -70,8 +71,8 @@ def decode_pred(pred, scale_idx, num_classes=20, img_size=640, conf_thres=0.25, 
         [(10, 13), (16, 30), (33, 23)],
         [(30, 61), (62, 45), (59, 119)],
         [(116, 90), (156, 198), (373, 326)]
-    ]) / img_size
-    anchors = anchors[scale_idx]
+    ]) / img_size  # normalize
+    anchors = anchors[scale_idx].to(pred.device)
 
     # Grid
     grid_y, grid_x = torch.meshgrid(torch.arange(H), torch.arange(W), indexing='ij')
@@ -86,9 +87,9 @@ def decode_pred(pred, scale_idx, num_classes=20, img_size=640, conf_thres=0.25, 
     pred_boxes = torch.cat([xy_min, xy_max], dim=-1)  # (N, A, H, W, 4)
 
     # Flatten
-    pred_boxes = pred_boxes.view(N, -1, 4)
-    pred_obj = pred_obj.view(N, -1, 1)
-    pred_cls = pred_cls.view(N, -1, num_classes)
+    pred_boxes = pred_boxes.reshape(N, -1, 4)
+    pred_obj = pred_obj.reshape(N, -1, 1)
+    pred_cls = pred_cls.reshape(N, -1, num_classes)
 
     # Calculate scores
     class_probs = torch.sigmoid(pred_cls)
@@ -134,3 +135,22 @@ def collate_fn(batch):
 
     targets = torch.stack(padded_targets, 0)  # (N, B, 6)
     return images, targets
+
+def validate(model, val_dataset, device,  img_size=640, idx=None):
+    import random
+    model = model.to(device)
+    model.eval()
+    if idx is not None:
+        img, target = val_dataset[idx]
+    else:
+        img, target = random.choice(val_dataset)
+    img = img.to(device).unsqueeze(0)
+    img_target = img.cpu().squeeze(0).permute(1, 2, 0).numpy().astype(np.uint8)
+    img_pred = img_target.copy()
+    with torch.no_grad():
+        preds = model(img)
+        for scale_idx, pred in enumerate(preds):
+            detected_target = decode_pred(pred, scale_idx, img_size=val_dataset.img_size)[0]
+            img_pred = draw_bbox(img_pred, detected_target)
+            img_target = draw_bbox(img_target, target.numpy())
+    return img_pred, img_target

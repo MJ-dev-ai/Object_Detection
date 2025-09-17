@@ -1,1 +1,1 @@
-from .utils import draw_bbox, decode_pred, collate_fn
+from .utils import draw_bbox, decode_pred, collate_fn, validate

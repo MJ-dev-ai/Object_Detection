@@ -72,6 +72,7 @@ class VOCObjectDetection(Dataset):
     """
     def __init__(self, root, image_set="train", img_size=640):
         # image_set = "train", "val", "trainval"
+        self.img_size = img_size
         self.image_set = image_set
         self.mosaic = MosaicAugmentor(img_size=img_size)
         split_file = os.path.join(root, "ImageSets", "Main", f"{image_set}.txt")
@@ -141,7 +142,7 @@ class VOCObjectDetection(Dataset):
         if self.image_set == "train":
             img, target = self.mosaic(self, idx)
         else:
-            img, target = self.mosaic.letterbox(img, target)
+            img, target = self.mosaic.letterbox(img, target, new_shape=(self.img_size, self.img_size))
         img = MyTransform()(img)
         return img, torch.tensor(target, dtype=torch.float32)
 

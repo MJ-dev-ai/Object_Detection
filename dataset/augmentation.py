@@ -18,8 +18,8 @@ class MosaicAugmentor:
         """
         # Probability not to apply mosaic augmentation
         if random.random() > self.mosaic_prob:
-            img, target = dataset.load_image_and_lagels(idx)
-            img, target = self.letterbox(img, target)
+            img, target = dataset.load_image_and_labels(idx)
+            img, target = self.letterbox(img, target, new_shape=(self.img_size, self.img_size))
             return img, target
 
         # Select 4 images for Mosaic (including current index)
@@ -64,8 +64,8 @@ class MosaicAugmentor:
             # Move bounding boxes
             if target.shape[0] > 0:
                 # Coordinate transform + clip
-                target[:, [0, 2]] = np.clip(target[:, [0, 2]] * (x2a - x1a) / w + pos_x, 0, s - 1)
-                target[:, [1, 3]] = np.clip(target[:, [1, 3]] * (y2a - y1a) / h + pos_y, 0, s - 1)
+                target[:, [0, 2]] = np.clip(target[:, [0, 2]] + pos_x, 0, s - 1)
+                target[:, [1, 3]] = np.clip(target[:, [1, 3]] + pos_y, 0, s - 1)
 
                 # Filter out very small boxes
                 wh = target[:, 2:4] - target[:, 0:2]  # (N, 2)

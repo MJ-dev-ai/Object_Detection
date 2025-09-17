@@ -52,7 +52,6 @@ class Yolo_Loss(nn.Module):
                 if x2 <= x1 or y2 <= y1:  # skip invalid boxes
                     continue
 
-                # Normalize to [0,1]
                 cx = (x1 + x2) / 2.0
                 cy = (y1 + y2) / 2.0
                 bw = x2 - x1

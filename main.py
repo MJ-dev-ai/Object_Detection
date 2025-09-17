@@ -8,14 +8,13 @@ from model import YOLOv5n
 from dataset import VOCObjectDetection
 from train import Yolo_Loss
 from utils import collate_fn
-from tqdm import tqdm
-
+from train import train_model
 
 def main():
     start_time = time.time()
     
     # Load dataset
-    train_dataset = VOCObjectDetection(root=flags["data_dir"], image_set='train')
+    train_dataset = VOCObjectDetection(root=flags["data_dir"], image_set='train', img_size=320)
     train_loader = DataLoader(train_dataset, batch_size=flags["batch_size"], shuffle=True, collate_fn=collate_fn, num_workers=flags["num_workers"])
 
     # Load model
@@ -26,31 +25,27 @@ def main():
     print(device)
     criterion = Yolo_Loss(num_classes=flags["num_classes"], img_size=320, device=device)
     optimizer = Adam(params=model.parameters(), lr = flags["learning_rate"])
+    if os.path.exists(os.path.join(flags["model_dir"], "parameters.pt")):
+        checkpoint = torch.load(os.path.join(flags["model_dir"], "parameters.pt"), map_location=device)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    else:
+        train_model(model, train_loader, criterion, optimizer, flags, device)
+    
+    # Validate
+    val_dataset = VOCObjectDetection(root=flags["data_dir"], image_set='val', img_size=320)
+    from utils import validate
+    img_pred, img_target = validate(model, val_dataset, device, img_size=320)
 
-    train_loss = []
-    for epoch in range(flags["num_epochs"]):
-        epoch_loss = 0
-        for (data, target) in tqdm(train_loader):
-            preds = model(data)
-
-            loss, loss_items = criterion(preds, target)
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-            train_loss.append(loss.cpu().item())
-            epoch_loss += loss.cpu().item()
-        epoch_loss /= len(train_loader)
-        print(f"[Epoch {epoch+1}/{flags['num_epochs']}],",
-            f"Total Loss: {epoch_loss:.4f},",
-            f"(box: {loss_items['box']:.4f},",
-            f"obj: {loss_items['obj']:.4f},",
-            f"cls: {loss_items['cls']:.4f})")
-        if (epoch + 1) % 10 == 0:
-            if not os.path.exists(flags["model_dir"]): os.mkdir(flags["model_dir"])
-            filename = "parameters.pt"
-            torch.save(model.cpu().parameters(), os.path.join(flags["model_dir"], filename))
+    import matplotlib.pyplot as plt
+    plt.figure(figsize=(12, 6))
+    plt.subplot(1, 2, 1)
+    plt.imshow(img_target)
+    plt.title("Ground Truth")
+    plt.subplot(1, 2, 2)
+    plt.imshow(img_pred)
+    plt.title("Prediction")
+    plt.show()
 
     end_time = time.time()
     elapsed_time = end_time - start_time
