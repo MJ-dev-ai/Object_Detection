@@ -10,7 +10,32 @@ VOC_CLASSES = [
     "dog", "horse", "motorbike", "person", "pottedplant",
     "sheep", "sofa", "train", "tvmonitor"
 ]
-
+hexs = (
+            "FF3838",
+            "FF9D97",
+            "FF701F",
+            "FFB21D",
+            "CFD231",
+            "48F90A",
+            "92CC17",
+            "3DDB86",
+            "1A9334",
+            "00D4BB",
+            "2C99A8",
+            "00C2FF",
+            "344593",
+            "6473FF",
+            "0018EC",
+            "8438FF",
+            "520085",
+            "CB38FF",
+            "FF95C8",
+            "FF37C7",
+        )
+def hex2rgb(h):
+        """Converts hexadecimal color `h` to an RGB tuple (PIL-compatible) with order (R, G, B)."""
+        return tuple(int(h[1 + i : 1 + i + 2], 16) for i in (0, 2, 4))
+palette = [hex2rgb(f"#{c}") for c in hexs]
 def draw_bbox(img, target):
     # Convert img to numpy if PIL Image or tensor
     if isinstance(img, Image.Image):
@@ -19,7 +44,7 @@ def draw_bbox(img, target):
         img = (img * 255.0).permute(1, 2, 0).numpy().astype(np.uint8)
 
     result_img = img.copy()
-    box_color = [tuple(np.random.randint(0, 256, size=3).tolist()) for _ in range(20)]
+    box_color = palette
 
     for det in target:
         x1, y1, x2, y2, score, label = det

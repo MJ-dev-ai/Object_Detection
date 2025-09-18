@@ -50,19 +50,6 @@ class C3Block(nn.Module):
         x3 = torch.cat((x1, x2), dim=1)
         x3 = self.conv3(x3)
         return x3
-    
-# Divide input into four parts and concat in channel dimension
-class Focus(nn.Module):
-    def __init__(self, c1, c2):
-        super().__init__()
-        self.conv = Conv(c1 * 4, c2)
-    
-    def forward(self, x):
-        x = torch.cat([x[..., ::2, ::2],
-                       x[..., 1::2, ::2],
-                       x[..., ::2, 1::2],
-                       x[..., 1::2, 1::2]], dim=1)
-        return self.conv(x)
 
 # Concat outputs of conv and maxpool layers with stride 1
 class SPPF(nn.Module):

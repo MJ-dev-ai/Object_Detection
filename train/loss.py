@@ -3,7 +3,7 @@ from torch import nn
 
 class Yolo_Loss(nn.Module):
     def __init__(self, anchors=None, num_classes=20, img_size=640,
-                 lambda_box=0.05, lambda_obj=1.0, lambda_cls=0.5, device='cpu'):
+                 lambda_box=0.1, lambda_obj=1.0, lambda_cls=0.5, device='cpu'):
         super(Yolo_Loss, self).__init__()
         self.device = device
         self.num_classes = num_classes
@@ -14,7 +14,7 @@ class Yolo_Loss(nn.Module):
                 [(10, 13), (16, 30), (33, 23)],
                 [(30, 61), (62, 45), (59, 119)],
                 [(116, 90), (156, 198), (373, 326)]
-            ]) / self.img_size  # normalize
+            ])
         self.anchors = self.anchors.to(device)
         self.lambda_box = lambda_box
         self.lambda_obj = lambda_obj
@@ -41,7 +41,7 @@ class Yolo_Loss(nn.Module):
         device = self.device
         anchors = self.anchors[scale_idx].to(device).float()
         target_tensor = torch.zeros((N, A, 5 + num_classes, H, W), device=device, dtype=torch.float32)
-
+        anchor_t = 4.0  # threshold for anchor matching
         for b in range(N):
             target = targets[b].to(device)
             if target.numel() == 0:
@@ -61,23 +61,21 @@ class Yolo_Loss(nn.Module):
                 dx, dy = (cx / stride - gx), (cy /stride - gy)
 
                 # Select best anchor
-                wh_ratio = torch.stack([bw / anchors[:, 0], bh / anchors[:, 1]], dim=1)
-                with torch.no_grad():
-                    inv = 1.0 / (wh_ratio + 1e-6)
-                    mins = torch.min(wh_ratio, inv)
-                    iou_like = mins.prod(dim=1)
-                    best_anchor = int(torch.argmax(iou_like).item())
-
+                ratio = torch.stack([bw / anchors[:, 0], bh / anchors[:, 1]], dim=1)  # (3, 2)
+                max_ratio = torch.max(ratio, 1.0 / (ratio + 1e-6)).max(1)[0]
+                matching_anchors = (max_ratio < anchor_t).nonzero().view(-1)
+                if len(matching_anchors) == 0:
+                    continue
                 # Write to target tensor
-                # YOLOv5의 tx, ty는 2*sigmoid(tx)-0.5로 복원되므로, target에서는 dx+0.5를 그대로 저장
-                target_tensor[b, best_anchor, 0, gy, gx] = dx + 0.5
-                target_tensor[b, best_anchor, 1, gy, gx] = dy + 0.5
-                target_tensor[b, best_anchor, 2, gy, gx] = bw / anchors[best_anchor, 0]
-                target_tensor[b, best_anchor, 3, gy, gx] = bh / anchors[best_anchor, 1]
-                target_tensor[b, best_anchor, 4, gy, gx] = 1.0  # objectness
-                cls_idx = int(cls.item())
-                if 0 <= cls_idx < num_classes:
-                    target_tensor[b, best_anchor, 5 + cls_idx, gy, gx] = 1.0
+                for best_anchor in matching_anchors:
+                    target_tensor[b, best_anchor, 0, gy, gx] = dx
+                    target_tensor[b, best_anchor, 1, gy, gx] = dy
+                    target_tensor[b, best_anchor, 2, gy, gx] = bw / anchors[best_anchor, 0]
+                    target_tensor[b, best_anchor, 3, gy, gx] = bh / anchors[best_anchor, 1]
+                    target_tensor[b, best_anchor, 4, gy, gx] = obj  # objectness
+                    cls_idx = int(cls.item())
+                    if 0 <= cls_idx < num_classes:
+                        target_tensor[b, best_anchor, 5 + cls_idx, gy, gx] = 1.0
 
         return target_tensor
 
@@ -108,6 +106,7 @@ class Yolo_Loss(nn.Module):
         return total_loss, loss_items
     
     def bbox_iou(self, box1, box2, eps=1e-7):
+        import math
         # x1, x2 = cx - w/2, cx + w/2
         # y1, y2 = cy - h/2, cy + h/2
         b1_x1 = box1[:, 0] - box1[:, 2] / 2
@@ -119,6 +118,8 @@ class Yolo_Loss(nn.Module):
         b2_y1 = box2[:, 1] - box2[:, 3] / 2
         b2_x2 = box2[:, 0] + box2[:, 2] / 2
         b2_y2 = box2[:, 1] + box2[:, 3] / 2
+        w1, h1 = b1_x2 - b1_x1, b1_y2 - b1_y1
+        w2, h2 = b2_x2 - b2_x1, b2_y2 - b2_y1
 
         inter_x1 = torch.max(b1_x1, b2_x1)
         inter_y1 = torch.max(b1_y1, b2_y1)
@@ -131,6 +132,7 @@ class Yolo_Loss(nn.Module):
         union_area = b1_area + b2_area - inter_area + eps
 
         return inter_area / union_area
+
     
     def compute_loss_per_scale(self, pred, target, scale_idx):
         """
@@ -178,7 +180,7 @@ class Yolo_Loss(nn.Module):
         target_tw_th = target_box[:, :, 2:4, :, :].permute(0, 1, 3, 4, 2)
 
         target_xy = (target_tx_ty + grid) * stride
-        target_wh = (target_tw_th ** 2) * anchors.view(1, A, 1, 1, 2)
+        target_wh = (target_tw_th ** 2) * anchors.view(1, A, 1, 1, 2) * stride
         target_box_decode = torch.cat([target_xy, target_wh], dim=-1)
 
         # Positive mask
