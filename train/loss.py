@@ -63,19 +63,16 @@ class Yolo_Loss(nn.Module):
                 # Select best anchor
                 ratio = torch.stack([bw / anchors[:, 0], bh / anchors[:, 1]], dim=1)  # (3, 2)
                 max_ratio = torch.max(ratio, 1.0 / (ratio + 1e-6)).max(1)[0]
-                matching_anchors = (max_ratio < anchor_t).nonzero().view(-1)
-                if len(matching_anchors) == 0:
-                    continue
+                best_anchor = torch.argmin(max_ratio)
                 # Write to target tensor
-                for best_anchor in matching_anchors:
-                    target_tensor[b, best_anchor, 0, gy, gx] = dx
-                    target_tensor[b, best_anchor, 1, gy, gx] = dy
-                    target_tensor[b, best_anchor, 2, gy, gx] = bw / anchors[best_anchor, 0]
-                    target_tensor[b, best_anchor, 3, gy, gx] = bh / anchors[best_anchor, 1]
-                    target_tensor[b, best_anchor, 4, gy, gx] = obj  # objectness
-                    cls_idx = int(cls.item())
-                    if 0 <= cls_idx < num_classes:
-                        target_tensor[b, best_anchor, 5 + cls_idx, gy, gx] = 1.0
+                target_tensor[b, best_anchor, 0, gy, gx] = dx
+                target_tensor[b, best_anchor, 1, gy, gx] = dy
+                target_tensor[b, best_anchor, 2, gy, gx] = torch.log(bw / anchors[best_anchor, 0] + 1e-16)
+                target_tensor[b, best_anchor, 3, gy, gx] = torch.log(bh / anchors[best_anchor, 1] + 1e-16)
+                target_tensor[b, best_anchor, 4, gy, gx] = obj  # objectness
+                cls_idx = int(cls.item())
+                if 0 <= cls_idx < num_classes:
+                    target_tensor[b, best_anchor, 5 + cls_idx, gy, gx] = 1.0
 
         return target_tensor
 
@@ -171,8 +168,8 @@ class Yolo_Loss(nn.Module):
         pred_tx_ty = pred_box[:, :, 0:2, :, :].permute(0, 1, 3, 4, 2)
         pred_tw_th = pred_box[:, :, 2:4, :, :].permute(0, 1, 3, 4, 2)
 
-        pred_xy = (2.0 * torch.sigmoid(pred_tx_ty) - 0.5 + grid) * stride
-        pred_wh = ((2.0 * torch.sigmoid(pred_tw_th)) ** 2) * anchors.view(1, A, 1, 1, 2) * stride
+        pred_xy = (torch.sigmoid(pred_tx_ty) + grid) * stride
+        pred_wh = torch.exp(pred_tw_th) * anchors.view(1, A, 1, 1, 2)
         pred_box_decode = torch.cat([pred_xy, pred_wh], dim=-1)
 
         # Decode targets
@@ -180,7 +177,7 @@ class Yolo_Loss(nn.Module):
         target_tw_th = target_box[:, :, 2:4, :, :].permute(0, 1, 3, 4, 2)
 
         target_xy = (target_tx_ty + grid) * stride
-        target_wh = (target_tw_th ** 2) * anchors.view(1, A, 1, 1, 2) * stride
+        target_wh = torch.exp(target_tw_th) * anchors.view(1, A, 1, 1, 2)
         target_box_decode = torch.cat([target_xy, target_wh], dim=-1)
 
         # Positive mask
